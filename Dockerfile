@@ -45,5 +45,7 @@ EXPOSE 4200
 VOLUME /data
 ENV OPENFANG_HOME=/data
 ENV OPENFANG_API_LISTEN=0.0.0.0:4200
+# Ensure Claude credentials persist
+RUN ln -s /data/.claude /root/.claude
 ENTRYPOINT ["openfang"]
 CMD ["start"]
