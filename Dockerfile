@@ -32,8 +32,13 @@ COPY packages ./packages
 
 RUN cargo build --release --bin openfang
 
+# Final stage
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates curl && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g @anthropic-ai/claude-code && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/openfang /usr/local/bin/
 COPY --from=builder /build/agents /opt/openfang/agents
 EXPOSE 4200
