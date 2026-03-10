@@ -39,5 +39,6 @@ COPY --from=builder /build/agents /opt/openfang/agents
 EXPOSE 4200
 VOLUME /data
 ENV OPENFANG_HOME=/data
+ENV OPENFANG_API_LISTEN=0.0.0.0:4200
 ENTRYPOINT ["openfang"]
 CMD ["start"]

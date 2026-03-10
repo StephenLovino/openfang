@@ -1193,7 +1193,8 @@ impl Default for KernelConfig {
             data_dir: home_dir.join("data"),
             home_dir,
             log_level: "info".to_string(),
-            api_listen: "127.0.0.1:50051".to_string(),
+            api_listen: std::env::var("OPENFANG_API_LISTEN")
+                .unwrap_or_else(|_| "127.0.0.1:50051".to_string()),
             network_enabled: false,
             default_model: DefaultModelConfig::default(),
             memory: MemoryConfig::default(),
