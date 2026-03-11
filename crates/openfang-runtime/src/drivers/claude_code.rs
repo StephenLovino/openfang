@@ -134,7 +134,6 @@ impl LlmDriver for ClaudeCodeDriver {
         let mut cmd = tokio::process::Command::new(&self.cli_path);
         cmd.arg("-p")
             .arg(&prompt)
-            .arg("--dangerously-skip-permissions")
             .arg("--output-format")
             .arg("json");
 
@@ -221,7 +220,6 @@ impl LlmDriver for ClaudeCodeDriver {
         let mut cmd = tokio::process::Command::new(&self.cli_path);
         cmd.arg("-p")
             .arg(&prompt)
-            .arg("--dangerously-skip-permissions")
             .arg("--output-format")
             .arg("stream-json")
             .arg("--verbose");
@@ -320,7 +318,11 @@ impl LlmDriver for ClaudeCodeDriver {
             .map_err(|e| LlmError::Http(format!("Claude CLI wait failed: {e}")))?;
 
         if !status.success() {
-            warn!(code = ?status.code(), "Claude CLI exited with error");
+            tracing::error!(
+                cli = %self.cli_path,
+                code = ?status.code(),
+                "Claude CLI (streaming) exited with error"
+            );
         }
 
         let _ = tx
