@@ -151,17 +151,33 @@ impl LlmDriver for ClaudeCodeDriver {
         let output = cmd
             .output()
             .await
-            .map_err(|e| LlmError::Http(format!("Failed to spawn claude CLI: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(cli = %self.cli_path, error = %e, "Failed to spawn Claude CLI");
+                LlmError::Http(format!("Failed to spawn claude CLI: {e}"))
+            })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(
+                cli = %self.cli_path,
+                status = ?output.status.code(),
+                stderr = %stderr,
+                "Claude CLI returned error status"
+            );
             return Err(LlmError::Api {
                 status: output.status.code().unwrap_or(1) as u16,
                 message: format!("Claude CLI failed: {stderr}"),
             });
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        tracing::info!(
+            cli = %self.cli_path,
+            stdout_len = stdout.len(),
+            "Claude CLI output received"
+        );
+        debug!(stdout = %stdout, "Raw Claude CLI stdout");
 
         // Try JSON parse first
         if let Ok(parsed) = serde_json::from_str::<ClaudeJsonOutput>(&stdout) {
