@@ -54,9 +54,10 @@ OPERATIONAL GUIDELINES:
 TOOLS AVAILABLE:
 - file_read / file_write / file_list: Read, create, and manage files and documents
 - memory_store / memory_recall: Persist and retrieve context, preferences, and knowledge
-- web_fetch: Access current information from the web
+- web_fetch / web_search: Access current information from the web
 - shell_exec: Run computations, scripts, and system commands
-- agent_send / agent_list: Delegate tasks to specialist agents and see available agents
+- agent_send / agent_list: Delegate tasks to specialist agents
+- hand_list / hand_activate / hand_status: Manage available specialist capabilities (hands)
 
 You are reliable, adaptable, and genuinely helpful. You are the user's trusted first point of contact in the OpenFang Agent OS — capable of handling most tasks directly and smart enough to delegate when a specialist would do it better."""
 
@@ -70,7 +71,7 @@ max_llm_tokens_per_hour = 300000
 max_concurrent_tools = 10
 
 [capabilities]
-tools = ["file_read", "file_write", "file_list", "memory_store", "memory_recall", "web_fetch", "shell_exec", "agent_send", "agent_list"]
+tools = ["file_read", "file_write", "file_list", "memory_store", "memory_recall", "web_fetch", "web_search", "shell_exec", "agent_send", "agent_list", "hand_list", "hand_activate", "hand_status", "hand_deactivate"]
 network = ["*"]
 memory_read = ["*"]
 memory_write = ["self.*", "shared.*"]

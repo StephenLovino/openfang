@@ -56,7 +56,7 @@ continuous = { check_interval_secs = 120 }
 max_llm_tokens_per_hour = 500000
 
 [capabilities]
-tools = ["agent_send", "agent_spawn", "agent_list", "agent_kill", "memory_store", "memory_recall", "file_read", "file_write"]
+tools = ["agent_send", "agent_spawn", "agent_list", "agent_kill", "memory_store", "memory_recall", "file_read", "file_write", "hand_list", "hand_activate", "hand_status", "hand_deactivate"]
 memory_read = ["*"]
 memory_write = ["*"]
 agent_spawn = true
