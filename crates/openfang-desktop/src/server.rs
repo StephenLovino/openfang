@@ -6,6 +6,7 @@
 use openfang_api::server::build_router;
 use openfang_kernel::OpenFangKernel;
 use std::net::{SocketAddr, TcpListener};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{error, info};
@@ -20,24 +21,40 @@ pub struct ServerHandle {
     shutdown_tx: watch::Sender<bool>,
     /// Join handle for the background server thread.
     server_thread: Option<std::thread::JoinHandle<()>>,
+    /// Track whether shutdown has already been initiated to prevent double shutdown.
+    shutdown_initiated: Arc<AtomicBool>,
 }
 
 impl ServerHandle {
     /// Signal the server to shut down and wait for the background thread.
     pub fn shutdown(mut self) {
-        let _ = self.shutdown_tx.send(true);
-        if let Some(handle) = self.server_thread.take() {
-            let _ = handle.join();
+        // Only proceed if shutdown hasn't been initiated yet
+        if self
+            .shutdown_initiated
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+            .is_ok()
+        {
+            let _ = self.shutdown_tx.send(true);
+            if let Some(handle) = self.server_thread.take() {
+                let _ = handle.join();
+            }
+            self.kernel.shutdown();
+            info!("OpenFang embedded server stopped");
         }
-        self.kernel.shutdown();
-        info!("OpenFang embedded server stopped");
     }
 }
 
 impl Drop for ServerHandle {
     fn drop(&mut self) {
-        let _ = self.shutdown_tx.send(true);
-        // Best-effort: don't block in drop, the thread will exit on its own.
+        // Only send shutdown signal if it hasn't been initiated yet
+        if self
+            .shutdown_initiated
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+            .is_ok()
+        {
+            let _ = self.shutdown_tx.send(true);
+            // Best-effort: don't block in drop, the thread will exit on its own.
+        }
     }
 }
 
@@ -47,6 +64,11 @@ impl Drop for ServerHandle {
 /// any Tauri window is created. The actual axum server runs on a dedicated
 /// thread with its own tokio runtime.
 pub fn start_server() -> Result<ServerHandle, Box<dyn std::error::Error>> {
+    // Load .env and secrets.env into process environment (same as CLI).
+    // Without this, API keys stored in ~/.openfang/.env are invisible to
+    // the kernel's provider detection and credential resolver.
+    load_dotenv_files();
+
     // Boot kernel (sync — no tokio needed)
     let kernel = OpenFangKernel::boot(None)?;
     let kernel = Arc::new(kernel);
@@ -61,6 +83,7 @@ pub fn start_server() -> Result<ServerHandle, Box<dyn std::error::Error>> {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let kernel_clone = kernel.clone();
+    let shutdown_initiated = Arc::new(AtomicBool::new(false));
 
     let server_thread = std::thread::Builder::new()
         .name("openfang-server".into())
@@ -83,6 +106,7 @@ pub fn start_server() -> Result<ServerHandle, Box<dyn std::error::Error>> {
         kernel,
         shutdown_tx,
         server_thread: Some(server_thread),
+        shutdown_initiated,
     })
 }
 
@@ -123,6 +147,47 @@ async fn run_embedded_server(
         let mut guard = state.bridge_manager.lock().await;
         if let Some(ref mut b) = *guard {
             b.stop().await;
+        }
+    }
+}
+
+/// Load ~/.openfang/.env and ~/.openfang/secrets.env into the process environment.
+/// System env vars take priority — existing vars are NOT overridden.
+fn load_dotenv_files() {
+    let home = if let Ok(h) = std::env::var("OPENFANG_HOME") {
+        std::path::PathBuf::from(h)
+    } else {
+        let user_home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        if user_home.is_empty() {
+            return;
+        }
+        std::path::PathBuf::from(user_home).join(".openfang")
+    };
+
+    for filename in &[".env", "secrets.env"] {
+        let path = home.join(filename);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let mut value = value.trim().to_string();
+                    if ((value.starts_with('"') && value.ends_with('"'))
+                        || (value.starts_with('\'') && value.ends_with('\'')))
+                        && value.len() >= 2
+                    {
+                        value = value[1..value.len() - 1].to_string();
+                    }
+                    if !key.is_empty() && std::env::var(key).is_err() {
+                        std::env::set_var(key, &value);
+                    }
+                }
+            }
         }
     }
 }
