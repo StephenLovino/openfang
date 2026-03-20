@@ -145,6 +145,8 @@ pub struct OpenFangKernel {
     pub peer_registry: OnceLock<openfang_wire::PeerRegistry>,
     /// OFP peer node — the local networking node (OnceLock for safe init after Arc creation).
     pub peer_node: OnceLock<Arc<openfang_wire::PeerNode>>,
+    /// OFP peer handle — cached Arc for sending messages to remote peers.
+    pub peer_handle: OnceLock<Arc<dyn openfang_wire::peer::PeerHandle>>,
     /// Boot timestamp for uptime calculation.
     pub booted_at: std::time::Instant,
     /// WhatsApp Web gateway child process PID (for shutdown cleanup).
@@ -1043,6 +1045,7 @@ impl OpenFangKernel {
             process_manager: Arc::new(openfang_runtime::process_manager::ProcessManager::new(5)),
             peer_registry: OnceLock::new(),
             peer_node: OnceLock::new(),
+            peer_handle: OnceLock::new(),
             booted_at: std::time::Instant::now(),
             whatsapp_gateway_pid: Arc::new(std::sync::Mutex::new(None)),
             channel_adapters: dashmap::DashMap::new(),
@@ -1764,7 +1767,7 @@ impl OpenFangKernel {
                 .flatten()
                 .and_then(|v| v.as_str().map(String::from));
 
-            let peer_agents: Vec<(String, String, String)> = self
+            let mut peer_agents: Vec<(String, String, String)> = self
                 .registry
                 .list()
                 .iter()
@@ -1776,6 +1779,23 @@ impl OpenFangKernel {
                     )
                 })
                 .collect();
+
+            // Include OFP remote agents from connected peers
+            if let Some(registry) = self.peer_registry.get() {
+                for peer in registry.connected_peers() {
+                    for agent in &peer.agents {
+                        peer_agents.push((
+                            agent.name.clone(),
+                            format!("{} (remote @ {})", agent.state, peer.node_name),
+                            if agent.description.is_empty() {
+                                "remote".to_string()
+                            } else {
+                                agent.description.clone()
+                            },
+                        ));
+                    }
+                }
+            }
 
             let prompt_ctx = openfang_runtime::prompt_builder::PromptContext {
                 agent_name: manifest.name.clone(),
@@ -2308,7 +2328,7 @@ impl OpenFangKernel {
                 .flatten()
                 .and_then(|v| v.as_str().map(String::from));
 
-            let peer_agents: Vec<(String, String, String)> = self
+            let mut peer_agents: Vec<(String, String, String)> = self
                 .registry
                 .list()
                 .iter()
@@ -2320,6 +2340,23 @@ impl OpenFangKernel {
                     )
                 })
                 .collect();
+
+            // Include OFP remote agents from connected peers
+            if let Some(registry) = self.peer_registry.get() {
+                for peer in registry.connected_peers() {
+                    for agent in &peer.agents {
+                        peer_agents.push((
+                            agent.name.clone(),
+                            format!("{} (remote @ {})", agent.state, peer.node_name),
+                            if agent.description.is_empty() {
+                                "remote".to_string()
+                            } else {
+                                agent.description.clone()
+                            },
+                        ));
+                    }
+                }
+            }
 
             let prompt_ctx = openfang_runtime::prompt_builder::PromptContext {
                 agent_name: manifest.name.clone(),
@@ -4265,6 +4302,7 @@ impl OpenFangKernel {
 
                 let _ = self.peer_registry.set(registry.clone());
                 let _ = self.peer_node.set(node.clone());
+                let _ = self.peer_handle.set(handle.clone());
 
                 // Connect to bootstrap peers
                 for peer_addr_str in &self.config.network.bootstrap_peers {
@@ -5700,20 +5738,51 @@ impl KernelHandle for OpenFangKernel {
     }
 
     async fn send_to_agent(&self, agent_id: &str, message: &str) -> Result<String, String> {
-        // Try UUID first, then fall back to name lookup
-        let id: AgentId = match agent_id.parse() {
-            Ok(id) => id,
+        // Try UUID first, then fall back to name lookup (local agents)
+        let local_result: Result<AgentId, ()> = match agent_id.parse() {
+            Ok(id) => Ok(id),
             Err(_) => self
                 .registry
                 .find_by_name(agent_id)
                 .map(|e| e.id)
-                .ok_or_else(|| format!("Agent not found: {agent_id}"))?,
+                .ok_or(()),
         };
-        let result = self
-            .send_message(id, message)
-            .await
-            .map_err(|e| format!("Send failed: {e}"))?;
-        Ok(result.response)
+
+        if let Ok(id) = local_result {
+            let result = self
+                .send_message(id, message)
+                .await
+                .map_err(|e| format!("Send failed: {e}"))?;
+            return Ok(result.response);
+        }
+
+        // Not found locally — try OFP remote peers
+        if let (Some(peer_node), Some(peer_handle)) =
+            (self.peer_node.get(), self.peer_handle.get())
+        {
+            if let Some(registry) = self.peer_registry.get() {
+                for peer in registry.connected_peers() {
+                    if peer
+                        .agents
+                        .iter()
+                        .any(|a| a.name == agent_id || a.id == agent_id)
+                    {
+                        return peer_node
+                            .send_to_peer(
+                                &peer.node_id,
+                                agent_id,
+                                message,
+                                None,
+                                Arc::clone(peer_handle),
+                            )
+                            .await
+                            .map_err(|e| format!("OFP send failed: {e}"));
+                    }
+                }
+            }
+        }
+
+        Err(format!("Agent not found (local or remote): {agent_id}"))
     }
 
     fn list_agents(&self) -> Vec<kernel_handle::AgentInfo> {
