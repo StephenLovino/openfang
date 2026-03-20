@@ -45,16 +45,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     nodejs \
     npm \
+    ffmpeg \
     && npm install -g @anthropic-ai/claude-code \
+    && pip3 install --break-system-packages playwright yt-dlp \
+    && playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/openfang /usr/local/bin/
 COPY --from=builder /build/agents /opt/openfang/agents
+
+# Run as non-root user so Claude Code CLI allows --dangerously-skip-permissions
+RUN useradd -m -s /bin/bash openfang
 EXPOSE 4200
 VOLUME /data
 ENV OPENFANG_HOME=/data
 ENV OPENFANG_API_LISTEN=0.0.0.0:4200
-# Ensure Claude credentials persist
-RUN ln -s /data/.claude /root/.claude
+RUN mkdir -p /data /home/openfang/.claude && chown -R openfang:openfang /data /home/openfang/.claude
+USER openfang
 ENTRYPOINT ["openfang"]
 CMD ["start"]
