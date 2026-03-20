@@ -60,7 +60,8 @@ EXPOSE 4200
 VOLUME /data
 ENV OPENFANG_HOME=/data
 ENV OPENFANG_API_LISTEN=0.0.0.0:4200
-RUN mkdir -p /data /home/openfang/.claude && chown -R openfang:openfang /data /home/openfang/.claude
+RUN mkdir -p /data/.claude && chown -R openfang:openfang /data \
+    && ln -sf /data/.claude /home/openfang/.claude
 USER openfang
 ENTRYPOINT ["openfang"]
 CMD ["start"]
