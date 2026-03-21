@@ -326,19 +326,24 @@ pub fn inject_attachments_into_session(
 }
 
 /// POST /api/agents/:id/message — Send a message to an agent.
+/// Accepts either a UUID or agent name as the `:id` path parameter.
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<MessageRequest>,
 ) -> impl IntoResponse {
+    // Accept either UUID or agent name
     let agent_id: AgentId = match id.parse() {
         Ok(id) => id,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "Invalid agent ID"})),
-            );
-        }
+        Err(_) => match state.kernel.registry.find_by_name(&id) {
+            Some(entry) => entry.id,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "Agent not found (invalid ID and no agent with that name)"})),
+                );
+            }
+        },
     };
 
     // SECURITY: Reject oversized messages to prevent OOM / LLM token abuse.

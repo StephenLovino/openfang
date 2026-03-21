@@ -59,6 +59,11 @@ pub struct PromptContext {
     pub sender_id: Option<String>,
     /// Sender display name.
     pub sender_name: Option<String>,
+    /// LLM provider name (e.g. "claude-code", "anthropic").
+    /// Used to tailor delegation instructions for subprocess-based providers.
+    pub provider: Option<String>,
+    /// Local API port for curl-based delegation fallback.
+    pub api_port: Option<u16>,
 }
 
 /// Build the complete system prompt from a `PromptContext`.
@@ -163,7 +168,17 @@ pub fn build_system_prompt(ctx: &PromptContext) -> String {
 
     // Section 9.5 — Peer Agent Awareness (skip for subagents)
     if !ctx.is_subagent && !ctx.peer_agents.is_empty() {
-        sections.push(build_peer_agents_section(&ctx.agent_name, &ctx.peer_agents));
+        let is_subprocess_provider = ctx
+            .provider
+            .as_deref()
+            .map(|p| p == "claude-code" || p == "qwen-code")
+            .unwrap_or(false);
+        sections.push(build_peer_agents_section(
+            &ctx.agent_name,
+            &ctx.peer_agents,
+            is_subprocess_provider,
+            ctx.api_port,
+        ));
     }
 
     // Section 10 — Safety & Oversight (skip for subagents)
@@ -441,7 +456,12 @@ fn build_sender_section(sender_name: Option<&str>, sender_id: Option<&str>) -> O
     }
 }
 
-fn build_peer_agents_section(self_name: &str, peers: &[(String, String, String)]) -> String {
+fn build_peer_agents_section(
+    self_name: &str,
+    peers: &[(String, String, String)],
+    is_subprocess_provider: bool,
+    api_port: Option<u16>,
+) -> String {
     let mut out = String::from(
         "## Peer Agents\n\
          You are part of a multi-agent system. These agents are available (local and remote):\n",
@@ -452,11 +472,33 @@ fn build_peer_agents_section(self_name: &str, peers: &[(String, String, String)]
         }
         out.push_str(&format!("- **{}** ({}) — {}\n", name, state, model));
     }
-    out.push_str(
-        "\nYou can communicate with any of them (including remote agents on peer nodes) using \
-         `agent_send` (by name). Delegate tasks to specialized agents when appropriate — \
-         remote agents can access resources on their host machine.",
-    );
+
+    if is_subprocess_provider {
+        // Subprocess-based providers (claude-code, qwen-code) don't have access to
+        // OpenFang's built-in agent_send tool. Provide curl-based delegation instructions
+        // so the agent can delegate via the local API using its Bash/shell tool.
+        let port = api_port.unwrap_or(4200);
+        out.push_str(&format!(
+            "\n### How to Delegate to Peer Agents\n\
+             To send a task to another agent (local or remote), use your Bash/shell tool:\n\
+             ```\n\
+             curl -s -X POST http://localhost:{port}/api/agents/{{agent_name}}/message \\\n\
+             \x20 -H 'Content-Type: application/json' \\\n\
+             \x20 -d '{{\"message\": \"your task description here\"}}'\n\
+             ```\n\
+             Replace `{{agent_name}}` with the agent's name (e.g. `assistant`). \
+             The API accepts both agent names and UUIDs.\n\
+             To list all agents: `curl -s http://localhost:{port}/api/agents`\n\n\
+             Remote agents can access resources on their host machine. \
+             Delegate tasks to specialized agents when appropriate."
+        ));
+    } else {
+        out.push_str(
+            "\nYou can communicate with any of them (including remote agents on peer nodes) using \
+             `agent_send` (by name). Delegate tasks to specialized agents when appropriate — \
+             remote agents can access resources on their host machine.",
+        );
+    }
     out
 }
 

@@ -1869,6 +1869,9 @@ impl OpenFangKernel {
                 ),
                 sender_id,
                 sender_name,
+                provider: Some(manifest.model.provider.clone()),
+                api_port: self.config.api_listen.split(':').next_back()
+                    .and_then(|p| p.parse::<u16>().ok()),
             };
             manifest.model.system_prompt =
                 openfang_runtime::prompt_builder::build_system_prompt(&prompt_ctx);
@@ -2430,6 +2433,9 @@ impl OpenFangKernel {
                 ),
                 sender_id,
                 sender_name,
+                provider: Some(manifest.model.provider.clone()),
+                api_port: self.config.api_listen.split(':').next_back()
+                    .and_then(|p| p.parse::<u16>().ok()),
             };
             manifest.model.system_prompt =
                 openfang_runtime::prompt_builder::build_system_prompt(&prompt_ctx);

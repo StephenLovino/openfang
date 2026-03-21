@@ -61,6 +61,9 @@ pub struct ClaudeCodeDriver {
     active_pids: Arc<DashMap<String, u32>>,
     /// Message timeout in seconds. CLI subprocesses that exceed this are killed.
     message_timeout_secs: u64,
+    /// Optional MCP config JSON string to pass via `--mcp-config`.
+    /// Enables Claude Code to call OpenFang tools (agent_send, etc.).
+    mcp_config: Option<String>,
 }
 
 impl ClaudeCodeDriver {
@@ -78,6 +81,8 @@ impl ClaudeCodeDriver {
             );
         }
 
+        let mcp_config = Self::generate_mcp_config();
+
         Self {
             cli_path: cli_path
                 .filter(|s| !s.is_empty())
@@ -85,6 +90,7 @@ impl ClaudeCodeDriver {
             skip_permissions,
             active_pids: Arc::new(DashMap::new()),
             message_timeout_secs: DEFAULT_MESSAGE_TIMEOUT_SECS,
+            mcp_config,
         }
     }
 
@@ -111,6 +117,35 @@ impl ClaudeCodeDriver {
     /// Get the shared PID map for external monitoring.
     pub fn pid_map(&self) -> Arc<DashMap<String, u32>> {
         Arc::clone(&self.active_pids)
+    }
+
+    /// Generate an MCP config JSON string pointing to the OpenFang MCP server.
+    ///
+    /// Uses `std::env::current_exe()` to find the OpenFang binary, then
+    /// creates an MCP server config that tells Claude Code to spawn
+    /// `openfang mcp` as a stdio MCP server. This gives Claude Code
+    /// access to OpenFang's inter-agent tools (agent_send, etc.).
+    fn generate_mcp_config() -> Option<String> {
+        let exe_path = std::env::current_exe().ok()?;
+        let exe_str = exe_path.to_str()?;
+
+        // Verify the binary exists and looks like openfang
+        if !exe_path.exists() {
+            return None;
+        }
+
+        let config = serde_json::json!({
+            "mcpServers": {
+                "openfang": {
+                    "command": exe_str,
+                    "args": ["mcp"]
+                }
+            }
+        });
+
+        let json_str = serde_json::to_string(&config).ok()?;
+        info!(mcp_config = %json_str, "Generated MCP config for Claude Code");
+        Some(json_str)
     }
 
     /// Detect if the Claude Code CLI is available on PATH.
@@ -246,6 +281,11 @@ impl LlmDriver for ClaudeCodeDriver {
 
         if let Some(ref model) = model_flag {
             cmd.arg("--model").arg(model);
+        }
+
+        // Pass MCP config so Claude Code can call OpenFang tools
+        if let Some(ref mcp_config) = self.mcp_config {
+            cmd.arg("--mcp-config").arg(mcp_config);
         }
 
         Self::apply_env_filter(&mut cmd);
@@ -419,6 +459,11 @@ impl LlmDriver for ClaudeCodeDriver {
 
         if let Some(ref model) = model_flag {
             cmd.arg("--model").arg(model);
+        }
+
+        // Pass MCP config so Claude Code can call OpenFang tools
+        if let Some(ref mcp_config) = self.mcp_config {
+            cmd.arg("--mcp-config").arg(mcp_config);
         }
 
         Self::apply_env_filter(&mut cmd);

@@ -500,16 +500,16 @@ async fn test_invalid_agent_id_returns_400() {
     let server = start_test_server().await;
     let client = reqwest::Client::new();
 
-    // Send message to invalid ID
+    // Send message to invalid ID — now returns 404 because name lookup is attempted
     let resp = client
         .post(format!("{}/api/agents/not-a-uuid/message", server.base_url))
         .json(&serde_json::json!({"message": "hello"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.status(), 404);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("Invalid"));
+    assert!(body["error"].as_str().unwrap().contains("not found"));
 
     // Kill invalid ID
     let resp = client
